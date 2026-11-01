@@ -41,7 +41,7 @@ each approach can't be anticipated.
 ## Running it
 
 **Requirements:** Unity 6 (6000.x) or 2022.3 LTS with the High Definition 3D template,
-XR Interaction Toolkit, and an OpenXR/Oculus headset (tested setup: Meta Quest).
+XR Interaction Toolkit, and an OpenXR/Oculus headset.
 
 1. Clone the repo and open the folder in Unity Hub (**Add → Add project from disk**).
 2. Open the experiment scene, then set **Edit → Project Settings → Player → Active Input Handling → Both**.
