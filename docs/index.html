@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Personal Space in VR – browser preview</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+  :root { --bg:#0f1115; --panel:#181b22; --ink:#e8e6e3; --muted:#9aa0a6; --accent:#e0a458; --line:#2a2f3a; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width:1100px; margin:0 auto; padding:20px; display:grid; grid-template-columns: 1fr 320px; gap:16px; }
+  @media (max-width:860px){ .wrap{ grid-template-columns:1fr; } }
+  h1 { font-size:20px; margin:0 0 4px; letter-spacing:.2px; }
+  .sub { color:var(--muted); margin:0 0 14px; }
+  #view { position:relative; border-radius:10px; overflow:hidden; border:1px solid var(--line); aspect-ratio:16/10; background:#000; }
+  #view canvas { display:block; width:100%; height:100%; }
+  #msg { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center;
+         font-size:22px; font-weight:600; text-shadow:0 2px 8px #000; pointer-events:none; white-space:pre-line; }
+  #hud { position:absolute; left:12px; top:10px; font:12px ui-monospace, Menlo, monospace; color:#cfd3d8; text-shadow:0 1px 3px #000; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  .panel h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:0 0 10px; }
+  .row { display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
+  button { background:#262b36; color:var(--ink); border:1px solid #363c49; border-radius:7px; padding:8px 12px; font:inherit; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); color:#1a1307; border-color:var(--accent); font-weight:600; }
+  button:disabled { opacity:.45; cursor:default; }
+  label { color:var(--muted); font-size:13px; }
+  select { background:#262b36; color:var(--ink); border:1px solid #363c49; border-radius:6px; padding:4px 6px; font:inherit; }
+  kbd { background:#262b36; border:1px solid #363c49; border-radius:4px; padding:1px 5px; font:12px ui-monospace, monospace; }
+  table { width:100%; border-collapse:collapse; font:12px ui-monospace, monospace; }
+  th, td { padding:3px 4px; text-align:right; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:500; }
+  #log { max-height:220px; overflow:auto; }
+  #chart { width:100%; height:200px; display:block; }
+  .note { color:var(--muted); font-size:12px; margin-top:8px; }
+  .legend { display:flex; gap:14px; font-size:12px; color:var(--muted); margin-top:4px; }
+  .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:-1px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div>
+    <h1>Personal Space in VR — browser preview</h1>
+    <p class="sub">The same design as the Unity project, rendered on a flat screen. A person walks toward you; respond when they feel <b>too close</b>.</p>
+    <div id="view">
+      <div id="hud"></div>
+      <div id="msg">Choose a length and press Start</div>
+    </div>
+    <p class="note"><kbd>Space</kbd> start trial (VR: A button) &nbsp;·&nbsp; <kbd>Enter</kbd> or click the scene: “too close” (VR: trigger) &nbsp;·&nbsp; drag to look around</p>
+  </div>
+
+  <div style="display:flex; flex-direction:column; gap:16px;">
+    <div class="panel">
+      <h2>Session</h2>
+      <div class="row" style="align-items:center">
+        <label for="len">Length</label>
+        <select id="len">
+          <option value="1">Quick demo · 6 trials</option>
+          <option value="4">Full · 24 trials</option>
+        </select>
+      </div>
+      <div class="row">
+        <button class="primary" id="startBtn">Start</button>
+        <button id="copyBtn" disabled>Copy CSV</button>
+      </div>
+      <div class="note" id="copyNote">Design: speed 0.6 / 1.0 / 1.4 m/s × path head-on / 0.6 m to the side, shuffled. Start distance 6 m.</div>
+    </div>
+
+    <div class="panel">
+      <h2>Comfort distance by speed</h2>
+      <canvas id="chart" width="580" height="400"></canvas>
+      <div class="legend"><span><i class="sw" style="background:#e0a458"></i>head-on</span><span><i class="sw" style="background:#6fb1c9"></i>0.6 m to the side</span></div>
+    </div>
+
+    <div class="panel">
+      <h2>Trial log</h2>
+      <div id="log"><table><thead><tr><th>#</th><th>speed</th><th>offset</th><th>side</th><th>dist m</th><th>t s</th></tr></thead><tbody id="tbody"></tbody></table></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- scene ----------
+const view = document.getElementById('view');
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+view.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xbfc6cf);
+scene.fog = new THREE.Fog(0xbfc6cf, 12, 30);
+
+const camera = new THREE.PerspectiveCamera(70, 16/10, 0.05, 100);
+const EYE = 1.6;
+camera.position.set(0, EYE, 0);
+let yaw = 0, pitch = -0.05;
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8170, 0.5));
+const sun = new THREE.DirectionalLight(0xffffff, 0.6);
+sun.position.set(4, 8, -2); sun.castShadow = true;
+sun.shadow.mapSize.set(1024,1024);
+Object.assign(sun.shadow.camera, { left:-10, right:10, top:10, bottom:-10 });
+scene.add(sun);
+
+// floor with tiles
+const tileCanvas = document.createElement('canvas'); tileCanvas.width = tileCanvas.height = 128;
+const tc = tileCanvas.getContext('2d');
+tc.fillStyle = '#d9d4ca'; tc.fillRect(0,0,128,128);
+tc.strokeStyle = '#b9b2a5'; tc.lineWidth = 3; tc.strokeRect(0,0,128,128);
+const tileTex = new THREE.CanvasTexture(tileCanvas);
+tileTex.wrapS = tileTex.wrapT = THREE.RepeatWrapping; tileTex.repeat.set(20,20);
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(20,20), new THREE.MeshStandardMaterial({ map:tileTex, roughness:.9 }));
+floor.rotation.x = -Math.PI/2; floor.receiveShadow = true; scene.add(floor);
+
+// walls
+const wallMat = new THREE.MeshStandardMaterial({ color:0xeae6df, roughness:1 });
+[[0,-10,0],[0,10,Math.PI],[-10,0,Math.PI/2],[10,0,-Math.PI/2]].forEach(([x,z,r])=>{
+  const w = new THREE.Mesh(new THREE.PlaneGeometry(20,4), wallMat);
+  w.position.set(x,2,z); w.rotation.y = r; w.receiveShadow = true; scene.add(w);
+});
+
+// walker: simple person (body, head, nose so it has a front)
+const walker = new THREE.Group();
+const skin = new THREE.MeshStandardMaterial({ color:0xc99a7a, roughness:.7 });
+const shirt = new THREE.MeshStandardMaterial({ color:0x3c6e8f, roughness:.8 });
+const pants = new THREE.MeshStandardMaterial({ color:0x2c2f36, roughness:.9 });
+function part(geo, mat, x,y,z){ const m = new THREE.Mesh(geo, mat); m.position.set(x,y,z); m.castShadow = true; walker.add(m); return m; }
+const torso = part(new THREE.CylinderGeometry(.19,.16,.62,16), shirt, 0,1.2,0);
+part(new THREE.SphereGeometry(.12,20,16), skin, 0,1.62,0);
+part(new THREE.SphereGeometry(.025,8,8), skin, 0,1.61,.12);
+const legL = new THREE.Group(), legR = new THREE.Group(), armL = new THREE.Group(), armR = new THREE.Group();
+[[legL,-.09,.9],[legR,.09,.9],[armL,-.25,1.48],[armR,.25,1.48]].forEach(([g,x,y],i)=>{
+  g.position.set(x,y,0); walker.add(g);
+  const len = i<2 ? .88 : .6, rad = i<2 ? .07 : .05;
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(rad,rad*.85,len,10), i<2 ? pants : shirt);
+  m.position.y = -len/2; m.castShadow = true; g.add(m);
+});
+walker.visible = false; scene.add(walker);
+
+function resize(){
+  const w = view.clientWidth, h = view.clientHeight;
+  renderer.setSize(w, h, false); camera.aspect = w/h; camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize); resize();
+
+// drag to look
+let dragging = false, moved = false, lx = 0, ly = 0;
+view.addEventListener('pointerdown', e => { dragging = true; moved = false; lx = e.clientX; ly = e.clientY; });
+addEventListener('pointermove', e => {
+  if (!dragging) return;
+  const dx = e.clientX - lx, dy = e.clientY - ly;
+  if (Math.abs(dx)+Math.abs(dy) > 3) moved = true;
+  yaw -= dx * .004; pitch = Math.max(-1.2, Math.min(1.2, pitch - dy * .004));
+  lx = e.clientX; ly = e.clientY;
+});
+addEventListener('pointerup', () => { if (dragging && !moved) respond(); dragging = false; });
+
+// ---------- experiment ----------
+const SPEEDS = [0.6, 1.0, 1.4], OFFSETS = [0, 0.6], START_DIST = 6;
+const msg = document.getElementById('msg'), hud = document.getElementById('hud');
+const startBtn = document.getElementById('startBtn'), copyBtn = document.getElementById('copyBtn');
+let trials = [], t = -1, state = 'idle', data = [];
+let walk = null; // {dir, speed, start, forward, headFlat, cond, side}
+
+function shuffle(a){ for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+
+startBtn.onclick = () => {
+  const reps = +document.getElementById('len').value;
+  trials = [];
+  SPEEDS.forEach(s => OFFSETS.forEach(o => { for (let r=0;r<reps;r++) trials.push({speed:s, offset:o}); }));
+  shuffle(trials); data = []; t = -1;
+  document.getElementById('tbody').innerHTML = '';
+  copyBtn.disabled = true; drawChart();
+  startBtn.textContent = 'Restart';
+  nextTrial();
+  renderer.domElement.focus?.();
+};
+
+function nextTrial(){
+  t++;
+  walker.visible = false;
+  if (t >= trials.length){ state = 'done'; msg.textContent = 'Done — thank you!'; copyBtn.disabled = false; return; }
+  state = 'ready';
+  msg.textContent = `Trial ${t+1} of ${trials.length}\nPress Space to start`;
+}
+
+function beginWalk(){
+  state = 'delay'; msg.textContent = '';
+  setTimeout(() => {
+    const c = trials[t];
+    const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+    const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0,1,0));
+    const side = Math.random() < .5 ? -1 : 1;
+    const headFlat = new THREE.Vector3(camera.position.x, 0, camera.position.z);
+    const start = headFlat.clone().addScaledVector(forward, START_DIST).addScaledVector(right, c.offset*side);
+    walker.position.copy(start);
+    walker.rotation.set(0, Math.atan2(-forward.x, -forward.z), 0);
+    walker.visible = true;
+    walk = { dir: forward.clone().negate(), speed:c.speed, t0: performance.now(), forward, headFlat, cond:c, side, phase:0 };
+    state = 'walking';
+  }, 500 + Math.random()*1000);
+}
+
+function horizDist(){ return Math.hypot(walker.position.x - camera.position.x, walker.position.z - camera.position.z); }
+
+function respond(){ if (state === 'walking') endTrial(true); }
+
+function endTrial(responded){
+  state = 'iti';
+  const rt = (performance.now() - walk.t0)/1000;
+  const d = responded ? horizDist() : NaN;
+  const row = { trial:t+1, speed:walk.cond.speed, offset:walk.cond.offset, side:walk.side, responded:responded?1:0, distance_m:d, time_s:rt };
+  data.push(row);
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td>${row.trial}</td><td>${row.speed.toFixed(1)}</td><td>${row.offset.toFixed(1)}</td><td>${row.side>0?'R':'L'}</td><td>${responded?d.toFixed(2):'—'}</td><td>${rt.toFixed(2)}</td>`;
+  document.getElementById('tbody').prepend(tr);
+  msg.textContent = responded ? `${d.toFixed(2)} m` : 'No response';
+  drawChart();
+  setTimeout(() => { walker.visible = false; setTimeout(nextTrial, 500); }, 700);
+}
+
+addEventListener('keydown', e => {
+  if (e.code === 'Space'){ e.preventDefault(); if (state === 'ready') beginWalk(); }
+  if (e.code === 'Enter'){ e.preventDefault(); respond(); }
+});
+
+copyBtn.onclick = async () => {
+  const csv = 'participant,trial,speed,offset,side,responded,distance_m,time_s\n' +
+    data.map(r => `P01,${r.trial},${r.speed},${r.offset},${r.side},${r.responded},${isNaN(r.distance_m)?'NaN':r.distance_m.toFixed(3)},${r.time_s.toFixed(3)}`).join('\n');
+  const note = document.getElementById('copyNote');
+  try { await navigator.clipboard.writeText(csv); note.textContent = 'CSV copied to clipboard.'; }
+  catch { note.textContent = 'Clipboard blocked — select the trial log instead.'; }
+};
+
+// ---------- chart ----------
+function drawChart(){
+  const cv = document.getElementById('chart'), g = cv.getContext('2d');
+  const W = cv.width, H = cv.height, L = 70, R = 20, T = 20, B = 60;
+  g.clearRect(0,0,W,H);
+  const xOf = s => L + (s-0.4)/(1.6-0.4)*(W-L-R);
+  const yMax = 4, yOf = v => T + (1 - v/yMax)*(H-T-B);
+  g.strokeStyle = '#2a2f3a'; g.fillStyle = '#9aa0a6'; g.font = '22px system-ui'; g.lineWidth = 1;
+  for (let v=0; v<=yMax; v++){ g.beginPath(); g.moveTo(L, yOf(v)); g.lineTo(W-R, yOf(v)); g.stroke(); g.textAlign='right'; g.fillText(v, L-10, yOf(v)+7); }
+  g.textAlign = 'center';
+  SPEEDS.forEach(s => g.fillText(s.toFixed(1), xOf(s), H-B+30));
+  g.fillText('walking speed (m/s)', (L+W-R)/2, H-6);
+  g.save(); g.translate(20, (T+H-B)/2); g.rotate(-Math.PI/2); g.fillText('distance (m)', 0, 0); g.restore();
+  [[0,'#e0a458',-6],[0.6,'#6fb1c9',6]].forEach(([o,col,jit]) => {
+    const pts = SPEEDS.map(s => {
+      const v = data.filter(r => r.offset===o && r.speed===s && r.responded).map(r => r.distance_m);
+      return v.length ? { s, m: v.reduce((a,b)=>a+b,0)/v.length, vals:v } : null;
+    });
+    g.fillStyle = col; g.globalAlpha = .35;
+    pts.forEach(p => p && p.vals.forEach(v => { g.beginPath(); g.arc(xOf(p.s)+jit, yOf(Math.min(v,yMax)), 4, 0, 7); g.fill(); }));
+    g.globalAlpha = 1; g.strokeStyle = col; g.lineWidth = 3; g.beginPath();
+    let first = true;
+    pts.forEach(p => { if (!p) return; const x = xOf(p.s)+jit, y = yOf(Math.min(p.m,yMax)); first ? g.moveTo(x,y) : g.lineTo(x,y); first = false; });
+    g.stroke();
+    pts.forEach(p => { if (!p) return; g.beginPath(); g.arc(xOf(p.s)+jit, yOf(Math.min(p.m,yMax)), 7, 0, 7); g.fill(); });
+  });
+}
+drawChart();
+
+// ---------- loop ----------
+let last = performance.now();
+function loop(now){
+  const dt = Math.min(.05, (now - last)/1000); last = now;
+  camera.rotation.set(pitch, yaw, 0, 'YXZ');
+  if (state === 'walking' && walk){
+    walker.position.addScaledVector(walk.dir, walk.speed*dt);
+    walk.phase += dt * walk.speed * 5.5;
+    const a = Math.sin(walk.phase) * .45;
+    legL.rotation.x = a; legR.rotation.x = -a; armL.rotation.x = -a*.8; armR.rotation.x = a*.8;
+    torso.position.y = 1.2 + Math.abs(Math.cos(walk.phase))*.02;
+    const ahead = new THREE.Vector3(walker.position.x, 0, walker.position.z).sub(walk.headFlat).dot(walk.forward);
+    if (ahead < 0.2) endTrial(false);
+  }
+  hud.textContent = state === 'walking' ? 'walking…' : '';
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
