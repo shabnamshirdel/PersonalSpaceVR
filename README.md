@@ -81,4 +81,4 @@ Built after the IS&T CIC34 short course *SC02: Creating Perceptual and Behaviora
 Unity and VR* by Richard Murray (York University).
 
 ---
-Shabnam Shirdel · Centre for Vision Research, York University
+Shabnam Shirdel
